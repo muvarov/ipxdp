@@ -373,7 +373,7 @@ static void hex_dump(void *pkt, size_t length, u64 addr)
 	if (!DEBUG_HEXDUMP)
 		return;
 
-	sprintf(buf, "addr=%llu", addr);
+	sprintf(buf, "addr=%lu", addr);
 	printf("length = %zu\n", length);
 	printf("%s | ", buf);
 	while (length-- > 0) {
