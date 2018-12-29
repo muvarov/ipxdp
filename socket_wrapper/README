@@ -1,0 +1,7 @@
+Copy of SAMBA debug LDPRELOAD tool git://git.samba.org/socket_wrapper.git
+
+commit 8ccac24b78bc5aa758a02cdecf58bdd6b8d6da13
+Author: Andreas Schneider <asn@samba.org>
+Date:   Wed Nov 14 08:04:42 2018 +0100
+
+    Bump version to 1.2.1
