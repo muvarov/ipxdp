@@ -6,7 +6,8 @@ LWIPUNIXPORT = $(LWIPDIR)/../contrib/ports/unix/port/perf.c \
 		$(LWIPDIR)/../contrib/ports/unix/port/sys_arch.c \
 		$(LWIPDIR)/../contrib/ports/unix/port/netif/sio.c \
 		$(LWIPDIR)/../contrib/ports/unix/port/netif/fifo.c \
-		$(LWIPDIR)/../contrib/ports/unix/port/netif/tapif.c
+		$(LWIPDIR)/../contrib/ports/unix/port/netif/tapif.c \
+		netif/af_xdp.c
 
 lwipnetif_SRCS = \
     ${LWIPDIR}/netif/ethernet.c     \
@@ -46,6 +47,7 @@ all:
 		-I$(LWIPDIR)/../contrib/ports/unix/lib \
 		-I$(LWIPDIR)/../contrib/ports/unix/port/include \
 		-I$(LWIPDIR)/include \
+		-Inetif \
 		$(COREFILES) \
 		$(lwipnetif_SRCS) \
 		$(lwipcore4_SRCS) \
