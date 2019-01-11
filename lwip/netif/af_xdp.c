@@ -29,6 +29,21 @@
 #include <sys/ioctl.h>
 #include <linux/if.h>
 
+#include <assert.h>
+#include <libgen.h>
+#include <linux/bpf.h>
+#include <linux/if_link.h>
+#include <linux/if_xdp.h>
+#include <linux/if_ether.h>
+#include <bpf/libbpf.h>
+#include <bpf_util.h>
+#include <bpf/bpf.h>
+#include <net/ethernet.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/mman.h>
+#include <time.h>
+
 #ifndef AFXDP_DEFAULT_IF
 #define AFXDP_DEFAULT_IF "eth0"
 #endif
@@ -44,6 +59,52 @@
 typedef struct af_xdp_if {
   /* Add whatever per-interface state that is needed here. */
 } af_xdp_if;
+
+struct xdp_umem_uqueue {
+	u32 cached_prod;
+	u32 cached_cons;
+	u32 mask;
+	u32 size;
+	u32 *producer;
+	u32 *consumer;
+	u64 *ring;
+	void *map;
+};
+
+struct xdp_umem {
+	char *frames;
+	struct xdp_umem_uqueue fq;
+	struct xdp_umem_uqueue cq;
+	int fd;
+};
+
+struct xdp_uqueue {
+	u32 cached_prod;
+	u32 cached_cons;
+	u32 mask;
+	u32 size;
+	u32 *producer;
+	u32 *consumer;
+	struct xdp_desc *ring;
+	void *map;
+};
+
+struct xdpsock {
+	struct xdp_uqueue rx;
+	struct xdp_uqueue tx;
+	int sfd;
+	struct xdp_umem *umem;
+	u32 outstanding_tx;
+	unsigned long rx_npkts;
+	unsigned long tx_npkts;
+	unsigned long prev_rx_npkts;
+	unsigned long prev_tx_npkts;
+};
+
+static int num_socks;
+struct xdpsock *xsks[MAX_SOCKS];
+
+
 
 /* Forward declarations. */
 static void af_xdp_if_input(struct netif *netif);
@@ -289,3 +350,263 @@ af_xdp_if_thread(void *arg)
 }
 
 #endif /* NO_SYS */
+
+static unsigned long prev_time;
+
+static unsigned long get_nsecs(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1000000000UL + ts.tv_nsec;
+}
+
+static void dump_stats(void)
+{
+	unsigned long now = get_nsecs();
+	long dt = now - prev_time;
+	int i;
+
+	prev_time = now;
+
+	for (i = 0; i < num_socks && xsks[i]; i++) {
+		char *fmt = "%-15s %'-11.0f %'-11lu\n";
+		double rx_pps, tx_pps;
+
+		rx_pps = (xsks[i]->rx_npkts - xsks[i]->prev_rx_npkts) *
+			 1000000000. / dt;
+		tx_pps = (xsks[i]->tx_npkts - xsks[i]->prev_tx_npkts) *
+			 1000000000. / dt;
+
+		printf("\n sock%d@", i);
+		//print_benchmark(false);
+		printf("\n");
+
+		printf("%-15s %-11s %-11s %-11.2f\n", "", "pps", "pkts",
+		       dt / 1000000000.);
+		printf(fmt, "rx", rx_pps, xsks[i]->rx_npkts);
+		printf(fmt, "tx", tx_pps, xsks[i]->tx_npkts);
+
+		xsks[i]->prev_rx_npkts = xsks[i]->rx_npkts;
+		xsks[i]->prev_tx_npkts = xsks[i]->tx_npkts;
+	}
+}
+
+static inline u32 umem_nb_free(struct xdp_umem_uqueue *q, u32 nb)
+{
+	u32 free_entries = q->cached_cons - q->cached_prod;
+
+	if (free_entries >= nb)
+		return free_entries;
+
+	/* Refresh the local tail pointer */
+	q->cached_cons = *q->consumer + q->size;
+
+	return q->cached_cons - q->cached_prod;
+}
+
+static inline u32 xq_nb_avail(struct xdp_uqueue *q, u32 ndescs)
+{
+	u32 entries = q->cached_prod - q->cached_cons;
+
+	if (entries == 0) {
+		q->cached_prod = *q->producer;
+		entries = q->cached_prod - q->cached_cons;
+	}
+
+	return (entries > ndescs) ? ndescs : entries;
+}
+
+static inline int umem_fill_to_kernel_ex(struct xdp_umem_uqueue *fq,
+					 struct xdp_desc *d,
+					 size_t nb)
+{
+	u32 i;
+
+	if (umem_nb_free(fq, nb) < nb)
+		return -ENOSPC;
+
+	for (i = 0; i < nb; i++) {
+		u32 idx = fq->cached_prod++ & fq->mask;
+
+		fq->ring[idx] = d[i].addr;
+	}
+
+	u_smp_wmb();
+
+	*fq->producer = fq->cached_prod;
+
+	return 0;
+}
+
+static inline int umem_fill_to_kernel(struct xdp_umem_uqueue *fq, u64 *d,
+				      size_t nb)
+{
+	u32 i;
+
+	if (umem_nb_free(fq, nb) < nb)
+		return -ENOSPC;
+
+	for (i = 0; i < nb; i++) {
+		u32 idx = fq->cached_prod++ & fq->mask;
+
+		fq->ring[idx] = d[i];
+	}
+
+	u_smp_wmb();
+
+	*fq->producer = fq->cached_prod;
+
+	return 0;
+}
+
+static struct xdp_umem *xdp_umem_configure(int sfd)
+{
+	int fq_size = FQ_NUM_DESCS, cq_size = CQ_NUM_DESCS;
+	struct xdp_mmap_offsets off;
+	struct xdp_umem_reg mr;
+	struct xdp_umem *umem;
+	socklen_t optlen;
+	void *bufs;
+
+	umem = calloc(1, sizeof(*umem));
+	lassert(umem);
+
+	lassert(posix_memalign(&bufs, getpagesize(), /* PAGE_SIZE aligned */
+			       NUM_FRAMES * FRAME_SIZE) == 0);
+
+	mr.addr = (__u64)bufs;
+	mr.len = NUM_FRAMES * FRAME_SIZE;
+	mr.chunk_size = FRAME_SIZE;
+	mr.headroom = FRAME_HEADROOM;
+
+	lassert(setsockopt(sfd, SOL_XDP, XDP_UMEM_REG, &mr, sizeof(mr)) == 0);
+	lassert(setsockopt(sfd, SOL_XDP, XDP_UMEM_FILL_RING, &fq_size,
+			   sizeof(int)) == 0);
+	lassert(setsockopt(sfd, SOL_XDP, XDP_UMEM_COMPLETION_RING, &cq_size,
+			   sizeof(int)) == 0);
+
+	optlen = sizeof(off);
+	lassert(getsockopt(sfd, SOL_XDP, XDP_MMAP_OFFSETS, &off,
+			   &optlen) == 0);
+
+	umem->fq.map = mmap(0, off.fr.desc +
+			    FQ_NUM_DESCS * sizeof(u64),
+			    PROT_READ | PROT_WRITE,
+			    MAP_SHARED | MAP_POPULATE, sfd,
+			    XDP_UMEM_PGOFF_FILL_RING);
+	lassert(umem->fq.map != MAP_FAILED);
+
+	umem->fq.mask = FQ_NUM_DESCS - 1;
+	umem->fq.size = FQ_NUM_DESCS;
+	umem->fq.producer = umem->fq.map + off.fr.producer;
+	umem->fq.consumer = umem->fq.map + off.fr.consumer;
+	umem->fq.ring = umem->fq.map + off.fr.desc;
+	umem->fq.cached_cons = FQ_NUM_DESCS;
+
+	umem->cq.map = mmap(0, off.cr.desc +
+			     CQ_NUM_DESCS * sizeof(u64),
+			     PROT_READ | PROT_WRITE,
+			     MAP_SHARED | MAP_POPULATE, sfd,
+			     XDP_UMEM_PGOFF_COMPLETION_RING);
+	lassert(umem->cq.map != MAP_FAILED);
+
+	umem->cq.mask = CQ_NUM_DESCS - 1;
+	umem->cq.size = CQ_NUM_DESCS;
+	umem->cq.producer = umem->cq.map + off.cr.producer;
+	umem->cq.consumer = umem->cq.map + off.cr.consumer;
+	umem->cq.ring = umem->cq.map + off.cr.desc;
+
+	umem->frames = bufs;
+	umem->fd = sfd;
+
+	return umem;
+}
+
+static struct xdpsock *xsk_configure(struct xdp_umem *umem)
+{
+	struct sockaddr_xdp sxdp = {};
+	struct xdp_mmap_offsets off;
+	int sfd, ndescs = NUM_DESCS;
+	struct xdpsock *xsk;
+	bool shared = true;
+	socklen_t optlen;
+	u64 i;
+
+	sfd = socket(PF_XDP, SOCK_RAW, 0);
+	lassert(sfd >= 0);
+
+	xsk = calloc(1, sizeof(*xsk));
+	lassert(xsk);
+
+	xsk->sfd = sfd;
+	xsk->outstanding_tx = 0;
+
+	if (!umem) {
+		shared = false;
+		xsk->umem = xdp_umem_configure(sfd);
+	} else {
+		xsk->umem = umem;
+	}
+
+	lassert(setsockopt(sfd, SOL_XDP, XDP_RX_RING,
+			   &ndescs, sizeof(int)) == 0);
+	lassert(setsockopt(sfd, SOL_XDP, XDP_TX_RING,
+			   &ndescs, sizeof(int)) == 0);
+	optlen = sizeof(off);
+	lassert(getsockopt(sfd, SOL_XDP, XDP_MMAP_OFFSETS, &off,
+			   &optlen) == 0);
+
+	/* Rx */
+	xsk->rx.map = mmap(NULL,
+			   off.rx.desc +
+			   NUM_DESCS * sizeof(struct xdp_desc),
+			   PROT_READ | PROT_WRITE,
+			   MAP_SHARED | MAP_POPULATE, sfd,
+			   XDP_PGOFF_RX_RING);
+	lassert(xsk->rx.map != MAP_FAILED);
+
+	if (!shared) {
+		for (i = 0; i < NUM_DESCS * FRAME_SIZE; i += FRAME_SIZE)
+			lassert(umem_fill_to_kernel(&xsk->umem->fq, &i, 1)
+				== 0);
+	}
+
+	/* Tx */
+	xsk->tx.map = mmap(NULL,
+			   off.tx.desc +
+			   NUM_DESCS * sizeof(struct xdp_desc),
+			   PROT_READ | PROT_WRITE,
+			   MAP_SHARED | MAP_POPULATE, sfd,
+			   XDP_PGOFF_TX_RING);
+	lassert(xsk->tx.map != MAP_FAILED);
+
+	xsk->rx.mask = NUM_DESCS - 1;
+	xsk->rx.size = NUM_DESCS;
+	xsk->rx.producer = xsk->rx.map + off.rx.producer;
+	xsk->rx.consumer = xsk->rx.map + off.rx.consumer;
+	xsk->rx.ring = xsk->rx.map + off.rx.desc;
+
+	xsk->tx.mask = NUM_DESCS - 1;
+	xsk->tx.size = NUM_DESCS;
+	xsk->tx.producer = xsk->tx.map + off.tx.producer;
+	xsk->tx.consumer = xsk->tx.map + off.tx.consumer;
+	xsk->tx.ring = xsk->tx.map + off.tx.desc;
+	xsk->tx.cached_cons = NUM_DESCS;
+
+	sxdp.sxdp_family = PF_XDP;
+	sxdp.sxdp_ifindex = 0;  //opt_ifindex;
+	sxdp.sxdp_queue_id = 0; //opt_queue;
+
+	if (shared) {
+		sxdp.sxdp_flags = XDP_SHARED_UMEM;
+		sxdp.sxdp_shared_umem_fd = umem->fd;
+	} else {
+		sxdp.sxdp_flags = 0; //opt_xdp_bind_flags;
+	}
+
+	lassert(bind(sfd, (struct sockaddr *)&sxdp, sizeof(sxdp)) == 0);
+
+	return xsk;
+}
+

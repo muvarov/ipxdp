@@ -1,4 +1,6 @@
 LWIPDIR=/opt/Linaro/xdp/lwip.git/src
+ARCH := x86
+KSRC := /opt/Linaro/xdp/linux.git
 
 include $(LWIPDIR)/Filelists.mk
 
@@ -41,6 +43,12 @@ example_app = $(LWIPDIR)/../contrib/apps/httpserver/httpserver-netconn.c \
 
 ping_app = ping.c
 
+AF_XDP_INCLUDE = -I$(KSRC)/tools/lib/ \
+		-I$(KSRC)/tools/testing/selftests/bpf \
+		-I$(KSRC)/tools/testing/selftests/bpf/include \
+		-I$(KSRC)/tools/include -I. -I$(KSRC)/tools/lib/bpf \
+		-I$(KSRC)/include/uapi
+
 all:
 	@echo compiling lwip unix port
 	@${CC} $(CFLAGS) -DLWIP_DEBUG -O0 -g \
@@ -48,6 +56,7 @@ all:
 		-I$(LWIPDIR)/../contrib/ports/unix/port/include \
 		-I$(LWIPDIR)/include \
 		-Inetif \
+		$(AF_XDP_INCLUDE) \
 		$(COREFILES) \
 		$(lwipnetif_SRCS) \
 		$(lwipcore4_SRCS) \
