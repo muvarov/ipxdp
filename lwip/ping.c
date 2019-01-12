@@ -405,6 +405,8 @@ ping_init(const ip_addr_t* ping_addr)
 }
 
 #include <netif/tapif.h>
+#include <netif/af_xdp.h>
+
 static struct netif netif;
 
 #if LWIP_IPV4
@@ -416,11 +418,13 @@ void init_default_netif(void)
 #endif
 {
 #if NO_SYS
-netif_add(&netif, NETIF_ADDRS NULL, tapif_init, netif_input);
+	netif_add(&netif, NETIF_ADDRS NULL, tapif_init, netif_input);
 #else
-  netif_add(&netif, NETIF_ADDRS NULL, tapif_init, tcpip_input);
+	//netif_add(&netif, NETIF_ADDRS NULL, tapif_init, tcpip_input);
+	netif_add(&netif, NETIF_ADDRS NULL, af_xdp_if_init, tcpip_input);
+	printf("added default netif af_xdp_if_init\n");
 #endif
-  netif_set_default(&netif);
+  	netif_set_default(&netif);
 }
 
 static void
@@ -459,7 +463,7 @@ static void test_netif_init(void)
 	printf("Starting lwIP, local interface IP is %s\n", ip4addr_ntoa(&ipaddr));
 
 	init_default_netif(&ipaddr, &netmask, &gw);
-	//init_default_netif();
+
 #if LWIP_NETIF_STATUS_CALLBACK
 	netif_set_status_callback(netif_default, status_callback);
 #endif
@@ -490,7 +494,7 @@ test_init(void * arg)
 #endif /* !NO_SYS */
 }
 
-int  main()
+int  main(int argc, char **argv)
 {
 	const ip_addr_t ping_addr;
 	sys_sem_t init_sem;

@@ -48,8 +48,6 @@ int af_xdp_select(struct netif *netif);
 #define likely(x) __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
-static void dump_stats(void);
-
 #define lassert(expr)							\
 	do {								\
 		if (!(expr)) {						\
@@ -57,7 +55,6 @@ static void dump_stats(void);
 				#expr ": errno: %d/\"%s\"\n",		\
 				__FILE__, __func__, __LINE__,		\
 				errno, strerror(errno));		\
-			dump_stats();					\
 			exit(EXIT_FAILURE);				\
 		}							\
 	} while (0)

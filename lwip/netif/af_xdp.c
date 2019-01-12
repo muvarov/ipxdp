@@ -44,8 +44,12 @@
 #include <sys/mman.h>
 #include <time.h>
 
+#include <bpf/libbpf.h>
+#include <bpf_util.h>
+#include <bpf/bpf.h>
+
 #ifndef AFXDP_DEFAULT_IF
-#define AFXDP_DEFAULT_IF "eth0"
+#define AFXDP_DEFAULT_IF "enp8s0"
 #endif
 
 /* Define those to better describe your network interface. */
@@ -56,9 +60,13 @@
 #define AFXDPIF_DEBUG LWIP_DBG_ON
 #endif
 
-typedef struct af_xdp_if {
+struct af_xdp_if {
   /* Add whatever per-interface state that is needed here. */
-} af_xdp_if;
+	int num_socks;
+	struct xdpsock *xsks[MAX_SOCKS];
+	int opt_queue;
+	int if_idx;
+};
 
 struct xdp_umem_uqueue {
 	u32 cached_prod;
@@ -101,12 +109,9 @@ struct xdpsock {
 	unsigned long prev_tx_npkts;
 };
 
-static int num_socks;
-struct xdpsock *xsks[MAX_SOCKS];
-
-
-
 /* Forward declarations. */
+static struct xdpsock *xsk_configure(struct xdp_umem *umem, struct af_xdp_if *af_xdp_if);
+
 static void af_xdp_if_input(struct netif *netif);
 #if !NO_SYS
 static void af_xdp_if_thread(void *arg);
@@ -116,33 +121,106 @@ static void af_xdp_if_thread(void *arg);
 static void
 low_level_init(struct netif *netif)
 {
-  struct af_xdp_if *af_xdp_if;
-#if LWIP_IPV4
-  int ret;
-  char buf[1024];
-#endif /* LWIP_IPV4 */
-  char *preconfigured_tapif = getenv("PRECONFIGURED_AF_XDP_IF");
+	struct af_xdp_if *af_xdp_if = (struct af_xdp_if*)netif->state;
+	struct rlimit r = {RLIM_INFINITY, RLIM_INFINITY};
+	struct bpf_prog_load_attr prog_load_attr = {
+		.prog_type	= BPF_PROG_TYPE_XDP,
+	};
+	int prog_fd, qidconf_map, xsks_map;
+	struct bpf_object *obj;
+	char xdp_filename[256];
+	struct bpf_map *map;
+	int i, ret, key = 0;
 
-  af_xdp_if = (struct af_xdp_if*)netif->state;
+	if (setrlimit(RLIMIT_MEMLOCK, &r)) {
+		fprintf(stderr, "ERROR: setrlimit(RLIMIT_MEMLOCK) \"%s\"\n",
+			strerror(errno));
+		exit(EXIT_FAILURE);
+	}
 
-  /* Obtain MAC address from network interface. */
+	snprintf(xdp_filename, sizeof(xdp_filename), "%s_kern.o", "lwip_af_xdp");
+	prog_load_attr.file = xdp_filename;
 
-  /* (We just fake an address...) */
-  netif->hwaddr[0] = 0x02;
-  netif->hwaddr[1] = 0x12;
-  netif->hwaddr[2] = 0x34;
-  netif->hwaddr[3] = 0x56;
-  netif->hwaddr[4] = 0x78;
-  netif->hwaddr[5] = 0xab;
-  netif->hwaddr_len = 6;
+	if (bpf_prog_load_xattr(&prog_load_attr, &obj, &prog_fd))
+		exit(EXIT_FAILURE);
+	if (prog_fd < 0) {
+		fprintf(stderr, "ERROR: no program found: %s\n",
+			strerror(prog_fd));
+		exit(EXIT_FAILURE);
+	}
 
-  /* device capabilities */
-  netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_IGMP;
+	map = bpf_object__find_map_by_name(obj, "qidconf_map");
+	qidconf_map = bpf_map__fd(map);
+	if (qidconf_map < 0) {
+		fprintf(stderr, "ERROR: no qidconf map found: %s\n",
+			strerror(qidconf_map));
+		exit(EXIT_FAILURE);
+	}
 
-  netif_set_link_up(netif);
+	map = bpf_object__find_map_by_name(obj, "xsks_map");
+	xsks_map = bpf_map__fd(map);
+	if (xsks_map < 0) {
+		fprintf(stderr, "ERROR: no xsks map found: %s\n",
+			strerror(xsks_map));
+		exit(EXIT_FAILURE);
+	}
+
+	af_xdp_if->if_idx = if_nametoindex(AFXDP_DEFAULT_IF); /* eth0*/
+	if (bpf_set_link_xdp_fd(af_xdp_if->if_idx, prog_fd, 0 /*opt_xdp_flags*/) < 0) {
+		fprintf(stderr, "ERROR: link %s set xdp fd %d failed\n",
+			AFXDP_DEFAULT_IF, af_xdp_if->if_idx);
+		exit(EXIT_FAILURE);
+	}
+
+	af_xdp_if->opt_queue = 0;
+	ret = bpf_map_update_elem(qidconf_map, &key, &af_xdp_if->opt_queue, 0);
+	if (ret) {
+		fprintf(stderr, "ERROR: bpf_map_update_elem qidconf\n");
+		exit(EXIT_FAILURE);
+	}
+
+
+	/* Create sockets... */
+	af_xdp_if->xsks[af_xdp_if->num_socks++] = xsk_configure(NULL, af_xdp_if);
+
+#if 0 || RR_LB
+	for (i = 0; i < MAX_SOCKS - 1; i++)
+		xsks[af_xdp_if->num_socks++] = xsk_configure(af_xdp_if->xsks[0]->umem, af_xdp_if);
+#endif
+
+	/* ...and insert them into the map. */
+	for (i = 0; i < af_xdp_if->num_socks; i++) {
+		key = i;
+		ret = bpf_map_update_elem(xsks_map, &key, &af_xdp_if->xsks[i]->sfd, 0);
+		if (ret) {
+			fprintf(stderr, "ERROR: bpf_map_update_elem %d\n", i);
+			exit(EXIT_FAILURE);
+		}
+	}
+
+	/* Configure LWIP things... */
+
+	/* Obtain MAC address from network interface. */
+
+	/* (We just fake an address...) */
+	netif->hwaddr[0] = 0x02;
+	netif->hwaddr[1] = 0x12;
+	netif->hwaddr[2] = 0x34;
+	netif->hwaddr[3] = 0x56;
+	netif->hwaddr[4] = 0x78;
+	netif->hwaddr[5] = 0xab;
+	netif->hwaddr_len = 6;
+
+	/* device capabilities */
+	netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_IGMP;
+
+	netif_set_link_up(netif);
+
+	printf("af_xdp: link %s set xdp fd %d ok.\n",
+	       AFXDP_DEFAULT_IF, af_xdp_if->if_idx);
 
 #if !NO_SYS
-  sys_thread_new("af_xdp_if_thread", af_xdp_if_thread, netif, DEFAULT_THREAD_STACKSIZE, DEFAULT_THREAD_PRIO);
+	sys_thread_new("af_xdp_if_thread", af_xdp_if_thread, netif, DEFAULT_THREAD_STACKSIZE, DEFAULT_THREAD_PRIO);
 #endif /* !NO_SYS */
 }
 /*-----------------------------------------------------------------------------------*/
@@ -163,6 +241,7 @@ low_level_output(struct netif *netif, struct pbuf *p)
   char buf[1518]; /* max packet size including VLAN excluding CRC */
   ssize_t written;
 
+  printf("%s\n", __func__);
 #if 0
   if (((double)rand()/(double)RAND_MAX) < 0.2) {
     printf("drop output\n");
@@ -211,6 +290,7 @@ low_level_input(struct netif *netif)
   char buf[1518]; /* max packet size including VLAN excluding CRC */
   struct af_xdp_if *af_xdp_if = (struct af_xdp_if*)netif->state;
 
+  printf("%s\n", __func__);
   /* Max: add read here */
 
   len = 0;
@@ -241,7 +321,7 @@ low_level_input(struct netif *netif)
 
 /*-----------------------------------------------------------------------------------*/
 /*
- * tapif_input():
+ * af_xdp_if_input():
  *
  * This function should be called when a packet is ready to be read
  * from the interface. It uses the function low_level_input() that
@@ -301,6 +381,7 @@ af_xdp_if_init(struct netif *netif)
 
   low_level_init(netif);
 
+  printf("%s() done.\n", __func__);
   return ERR_OK;
 }
 
@@ -361,15 +442,16 @@ static unsigned long get_nsecs(void)
 	return ts.tv_sec * 1000000000UL + ts.tv_nsec;
 }
 
-static void dump_stats(void)
+static void dump_stats(struct af_xdp_if *af_xdp_if)
 {
 	unsigned long now = get_nsecs();
 	long dt = now - prev_time;
 	int i;
+	struct xdpsock **xsks = af_xdp_if->xsks;
 
 	prev_time = now;
 
-	for (i = 0; i < num_socks && xsks[i]; i++) {
+	for (i = 0; i < af_xdp_if->num_socks && xsks[i]; i++) {
 		char *fmt = "%-15s %'-11.0f %'-11lu\n";
 		double rx_pps, tx_pps;
 
@@ -523,7 +605,7 @@ static struct xdp_umem *xdp_umem_configure(int sfd)
 	return umem;
 }
 
-static struct xdpsock *xsk_configure(struct xdp_umem *umem)
+static struct xdpsock *xsk_configure(struct xdp_umem *umem, struct af_xdp_if *af_xdp_if)
 {
 	struct sockaddr_xdp sxdp = {};
 	struct xdp_mmap_offsets off;
@@ -595,8 +677,8 @@ static struct xdpsock *xsk_configure(struct xdp_umem *umem)
 	xsk->tx.cached_cons = NUM_DESCS;
 
 	sxdp.sxdp_family = PF_XDP;
-	sxdp.sxdp_ifindex = 0;  //opt_ifindex;
-	sxdp.sxdp_queue_id = 0; //opt_queue;
+	sxdp.sxdp_ifindex = af_xdp_if->if_idx;  //opt_ifindex;
+	sxdp.sxdp_queue_id = af_xdp_if->opt_queue; //opt_queue;
 
 	if (shared) {
 		sxdp.sxdp_flags = XDP_SHARED_UMEM;

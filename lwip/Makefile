@@ -49,9 +49,11 @@ AF_XDP_INCLUDE = -I$(KSRC)/tools/lib/ \
 		-I$(KSRC)/tools/include -I. -I$(KSRC)/tools/lib/bpf \
 		-I$(KSRC)/include/uapi
 
+AF_XDP_LIBS = -lbpf -lelf
+
 all:
 	@echo compiling lwip unix port
-	@${CC} $(CFLAGS) -DLWIP_DEBUG -O0 -g \
+	${CC} $(CFLAGS) -DLWIP_DEBUG -O0 -g \
 		-I$(LWIPDIR)/../contrib/ports/unix/lib \
 		-I$(LWIPDIR)/../contrib/ports/unix/port/include \
 		-I$(LWIPDIR)/include \
@@ -62,6 +64,7 @@ all:
 		$(lwipcore4_SRCS) \
 		$(lwipapi_SRCS) \
 		$(LWIPUNIXPORT) \
+		$(AF_XDP_LIBS) \
 		-pthread -fPIC -shared -Wl,-soname,libipxdp.so -o libipxdp.so
 	@ls -l libipxdp.so
 	@file libipxdp.so
@@ -80,12 +83,13 @@ all:
 			     -I$(LWIPDIR)/include  \
 			     -I$(LWIPDIR)/../contrib \
 			     -I$(LWIPDIR)/../contrib/apps/httpserver \
+			     -I. \
 			     -L. -lipxdp -o ping
 
 	@ls -l ping
 
 check:
-	LD_LIBRARY_PATH=. ./ping
+	echo LD_LIBRARY_PATH=.:$(KSRC)/tools/lib/bpf ./ping
 
 clean:
 	rm -rf libipxdp.so
