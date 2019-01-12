@@ -37,6 +37,11 @@ int af_xdp_select(struct netif *netif);
 #define PF_XDP AF_XDP
 #endif
 
+#define DEBUG_HEXDUMP 1
+
+/* will require some rx code change to support batches */
+#define BATCH_SIZE 1
+
 #define barrier() __asm__ __volatile__("": : :"memory")
 #ifdef __aarch64__
 #define u_smp_rmb() __asm__ __volatile__("dmb ishld": : :"memory")

@@ -111,11 +111,50 @@ struct xdpsock {
 
 /* Forward declarations. */
 static struct xdpsock *xsk_configure(struct xdp_umem *umem, struct af_xdp_if *af_xdp_if);
+static u32 xq_nb_avail(struct xdp_uqueue *q, u32 ndescs);
+static int umem_fill_to_kernel_ex(struct xdp_umem_uqueue *fq,
+				  struct xdp_desc *d,
+				  size_t nb);
 
 static void af_xdp_if_input(struct netif *netif);
 #if !NO_SYS
 static void af_xdp_if_thread(void *arg);
 #endif /* !NO_SYS */
+
+static void hex_dump(void *pkt, size_t length, u64 addr)
+{
+	const unsigned char *address = (unsigned char *)pkt;
+	const unsigned char *line = address;
+	size_t line_size = 32;
+	unsigned char c;
+	char buf[32];
+	int i = 0;
+
+	if (!DEBUG_HEXDUMP)
+		return;
+
+	sprintf(buf, "addr=%lu", addr);
+	printf("length = %zu\n", length);
+	printf("%s | ", buf);
+	while (length-- > 0) {
+		printf("%02X ", *address++);
+		if (!(++i % line_size) || (length == 0 && i % line_size)) {
+			if (length == 0) {
+				while (i++ % line_size)
+					printf("__ ");
+			}
+			printf(" | ");	/* right close */
+			while (line < address) {
+				c = *line++;
+				printf("%c", (c < 33 || c == 255) ? 0x2E : c);
+			}
+			printf("\n");
+			if (length > 0)
+				printf("%s | ", buf);
+		}
+	}
+	printf("\n");
+}
 
 /*-----------------------------------------------------------------------------------*/
 static void
@@ -223,6 +262,19 @@ low_level_init(struct netif *netif)
 	sys_thread_new("af_xdp_if_thread", af_xdp_if_thread, netif, DEFAULT_THREAD_STACKSIZE, DEFAULT_THREAD_PRIO);
 #endif /* !NO_SYS */
 }
+
+static inline u32 xq_nb_free(struct xdp_uqueue *q, u32 ndescs)
+{
+	u32 free_entries = q->cached_cons - q->cached_prod;
+
+	if (free_entries >= ndescs)
+		return free_entries;
+
+	/* Refresh the local tail pointer */
+	q->cached_cons = *q->consumer + q->size;
+	return q->cached_cons - q->cached_prod;
+}
+
 /*-----------------------------------------------------------------------------------*/
 /*
  * low_level_output():
@@ -237,41 +289,73 @@ low_level_init(struct netif *netif)
 static err_t
 low_level_output(struct netif *netif, struct pbuf *p)
 {
-  struct af_xdp_if *af_xdp_if = (struct af_xdp_if*)netif->state;
-  char buf[1518]; /* max packet size including VLAN excluding CRC */
-  ssize_t written;
+	struct af_xdp_if *af_xdp_if = (struct af_xdp_if*)netif->state;
+	struct xdp_desc descs[BATCH_SIZE];
+	struct xdp_uqueue *uq = &af_xdp_if->xsks[0]->tx; 
+	struct xdp_desc *r = uq->ring;
+	u32 idx;
 
-  printf("%s\n", __func__);
+	printf("%s\n", __func__);
 #if 0
-  if (((double)rand()/(double)RAND_MAX) < 0.2) {
-    printf("drop output\n");
-    return ERR_OK; /* ERR_OK because we simulate packet loss on cable */
-  }
+	if (((double)rand()/(double)RAND_MAX) < 0.2) {
+		printf("drop output\n");
+		return ERR_OK; /* ERR_OK because we simulate packet loss on cable */
+	}
 #endif
 
-  if (p->tot_len > sizeof(buf)) {
-    MIB2_STATS_NETIF_INC(netif, ifoutdiscards);
-    perror("af_xdp_if: packet too large");
-    return ERR_IF;
-  }
+	if (xq_nb_free(uq, 1 /*ndescs*/) < 1) {
+		MIB2_STATS_NETIF_INC(netif, ifoutdiscards);
+		perror("xq_nb_free");
+		return ERR_IF;
+	}
 
-  /* initiate transfer(); */
-  pbuf_copy_partial(p, buf, p->tot_len, 0);
+	/* initiate transfer(); */
+	pbuf_copy_partial(p, (void *)descs[0].addr, p->tot_len, 0); /*fixme: need zero-copy*/
+	descs[0].len = p->tot_len; 
 
+	idx = uq->cached_prod++ & uq->mask;
+	r[idx].addr = descs[0].addr;
+	r[idx].len = descs[0].len;
 
-  /* signal that packet should be sent(); */
- // written = write(tapif->fd, buf, p->tot_len);
-  written = p->tot_len;
+	u_smp_wmb();
 
-  if (written < p->tot_len) {
-    MIB2_STATS_NETIF_INC(netif, ifoutdiscards);
-    perror("tapif: write");
-    return ERR_IF;
-  } else {
-    MIB2_STATS_NETIF_ADD(netif, ifoutoctets, (u32_t)written);
-    return ERR_OK;
-  }
+	*uq->producer = uq->cached_prod;
+
+	MIB2_STATS_NETIF_ADD(netif, ifoutoctets, descs[0].len);
+	return ERR_OK;
 }
+
+static inline void *xq_get_data(struct xdpsock *xsk, u64 addr)
+{
+	return &xsk->umem->frames[addr];
+}
+
+static inline int xq_deq(struct xdp_uqueue *uq,
+			 struct xdp_desc *descs,
+			 int ndescs)
+{
+	struct xdp_desc *r = uq->ring;
+	unsigned int idx;
+	int i, entries;
+
+	entries = xq_nb_avail(uq, ndescs);
+
+	u_smp_rmb();
+
+	for (i = 0; i < entries; i++) {
+		idx = uq->cached_cons++ & uq->mask;
+		descs[i] = r[idx];
+	}
+
+	if (entries > 0) {
+		u_smp_wmb();
+
+		*uq->consumer = uq->cached_cons;
+	}
+
+	return entries;
+}
+
 /*-----------------------------------------------------------------------------------*/
 /*
  * low_level_input():
@@ -284,39 +368,49 @@ low_level_output(struct netif *netif, struct pbuf *p)
 static struct pbuf *
 low_level_input(struct netif *netif)
 {
-  struct pbuf *p;
-  u16_t len;
-  ssize_t readlen;
-  char buf[1518]; /* max packet size including VLAN excluding CRC */
-  struct af_xdp_if *af_xdp_if = (struct af_xdp_if*)netif->state;
+	struct pbuf *p;
+	struct af_xdp_if *af_xdp_if = (struct af_xdp_if*)netif->state;
+	struct xdp_desc descs[BATCH_SIZE];
+	unsigned int rcvd, i;
+	struct xdpsock *xsk = af_xdp_if->xsks[0]; /*fixme: limitation for 1 socket */
 
-  printf("%s\n", __func__);
-  /* Max: add read here */
+	printf("%s\n", __func__);
 
-  len = 0;
+	rcvd = xq_deq(&xsk->rx, descs, 1 /*BATCH_SIZE*/);
+	if (!rcvd)
+		return NULL;
 
-  MIB2_STATS_NETIF_ADD(netif, ifinoctets, len);
+	for (i = 0; i < rcvd; i++) {
+		char *pkt = xq_get_data(xsk, descs[i].addr);
+
+		hex_dump(pkt, descs[i].len, descs[i].addr);
+
+		MIB2_STATS_NETIF_ADD(netif, ifinoctets, descs[i].len);
+
+		/* We allocate a pbuf chain of pbufs from the pool. */
+		p = pbuf_alloc(PBUF_RAW, descs[i].len, PBUF_POOL);
+		if (p != NULL) {
+			/* acknowledge that packet has been read(); */
+			pbuf_take(p, (const void*)descs[i].addr, descs[i].len);
+		} else {
+			/* drop packet(); */
+			MIB2_STATS_NETIF_INC(netif, ifindiscards);
+			LWIP_DEBUGF(NETIF_DEBUG, ("tapif_input: could not allocate pbuf\n"));
+		}
+	}
+
+
+	umem_fill_to_kernel_ex(&xsk->umem->fq, descs, rcvd);
 
 #if 0
-  /* Simulate drop on input */
-  if (((double)rand()/(double)RAND_MAX) < 0.2) {
-    printf("drop\n");
-    return NULL;
-  }
+	/* Simulate drop on input */
+	if (((double)rand()/(double)RAND_MAX) < 0.2) {
+		printf("drop\n");
+		return NULL;
+	}
 #endif
 
-  /* We allocate a pbuf chain of pbufs from the pool. */
-  p = pbuf_alloc(PBUF_RAW, len, PBUF_POOL);
-  if (p != NULL) {
-    pbuf_take(p, buf, len);
-    /* acknowledge that packet has been read(); */
-  } else {
-    /* drop packet(); */
-    MIB2_STATS_NETIF_INC(netif, ifindiscards);
-    LWIP_DEBUGF(NETIF_DEBUG, ("tapif_input: could not allocate pbuf\n"));
-  }
-
-  return p;
+	return p;
 }
 
 /*-----------------------------------------------------------------------------------*/
@@ -487,7 +581,7 @@ static inline u32 umem_nb_free(struct xdp_umem_uqueue *q, u32 nb)
 	return q->cached_cons - q->cached_prod;
 }
 
-static inline u32 xq_nb_avail(struct xdp_uqueue *q, u32 ndescs)
+static u32 xq_nb_avail(struct xdp_uqueue *q, u32 ndescs)
 {
 	u32 entries = q->cached_prod - q->cached_cons;
 
@@ -499,7 +593,7 @@ static inline u32 xq_nb_avail(struct xdp_uqueue *q, u32 ndescs)
 	return (entries > ndescs) ? ndescs : entries;
 }
 
-static inline int umem_fill_to_kernel_ex(struct xdp_umem_uqueue *fq,
+static int umem_fill_to_kernel_ex(struct xdp_umem_uqueue *fq,
 					 struct xdp_desc *d,
 					 size_t nb)
 {
