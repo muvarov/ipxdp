@@ -43,6 +43,7 @@
 #include <sys/socket.h>
 #include <sys/mman.h>
 #include <time.h>
+#include <poll.h>
 
 #include <bpf/libbpf.h>
 #include <bpf_util.h>
@@ -408,29 +409,29 @@ static inline int xq_deq(struct xdp_uqueue *uq,
 	return entries;
 }
 
-/*-----------------------------------------------------------------------------------*/
 /*
- * low_level_input():
+ * af_xdp_if_input():
  *
- * Should allocate a pbuf and transfer the bytes of the incoming
- * packet from the interface into the pbuf.
+ * This function should be called when a packet is ready to be read
+ * from the interface. It uses the function low_level_input() that
+ * should handle the actual reception of bytes from the network
+ * interface.
  *
  */
-/*-----------------------------------------------------------------------------------*/
-static struct pbuf *
-low_level_input(struct netif *netif)
+static void af_xdp_if_input(struct netif *netif)
 {
 	struct pbuf *p;
 	struct af_xdp_if *af_xdp_if = (struct af_xdp_if*)netif->state;
+	struct xdpsock *xsk = af_xdp_if->xsks[0]; /*fixme: limitation for 1 socket */
 	struct xdp_desc descs[BATCH_SIZE];
 	unsigned int rcvd, i;
-	struct xdpsock *xsk = af_xdp_if->xsks[0]; /*fixme: limitation for 1 socket */
+
 
 	printf("%s\n", __func__);
 
-	rcvd = xq_deq(&xsk->rx, descs, 1 /*BATCH_SIZE*/);
+	rcvd = xq_deq(&xsk->rx, descs, BATCH_SIZE);
 	if (!rcvd)
-		return NULL;
+		return;
 
 	for (i = 0; i < rcvd; i++) {
 		char *pkt = xq_get_data(xsk, descs[i].addr);
@@ -443,11 +444,23 @@ low_level_input(struct netif *netif)
 		p = pbuf_alloc(PBUF_RAW, descs[i].len, PBUF_POOL);
 		if (p != NULL) {
 			/* acknowledge that packet has been read(); */
-			pbuf_take(p, (const void*)descs[i].addr, descs[i].len);
+			pbuf_take(p,
+				  pkt,
+				  descs[i].len);
+
+#if LINK_STATS
+			LINK_STATS_INC(link.recv);
+#endif /* LINK_STATS */
+
+			/* pass to IP stack */
+			if (netif->input(p, netif) != ERR_OK) {
+				printf("af_xdp_if_input: netif input error\n");
+				pbuf_free(p);
+			}
 		} else {
 			/* drop packet(); */
 			MIB2_STATS_NETIF_INC(netif, ifindiscards);
-			LWIP_DEBUGF(NETIF_DEBUG, ("tapif_input: could not allocate pbuf\n"));
+			LWIP_DEBUGF(NETIF_DEBUG, ("af_xdp_input: could not allocate pbuf\n"));
 		}
 	}
 
@@ -462,38 +475,9 @@ low_level_input(struct netif *netif)
 	}
 #endif
 
-	return p;
+	return;
 }
 
-/*-----------------------------------------------------------------------------------*/
-/*
- * af_xdp_if_input():
- *
- * This function should be called when a packet is ready to be read
- * from the interface. It uses the function low_level_input() that
- * should handle the actual reception of bytes from the network
- * interface.
- *
- */
-/*-----------------------------------------------------------------------------------*/
-static void
-af_xdp_if_input(struct netif *netif)
-{
-  struct pbuf *p = low_level_input(netif);
-
-  if (p == NULL) {
-#if LINK_STATS
-    LINK_STATS_INC(link.recv);
-#endif /* LINK_STATS */
-    LWIP_DEBUGF(AFXDPIF_DEBUG, ("af_xdp_if_input: low_level_input returned NULL\n"));
-    return;
-  }
-
-  if (netif->input(p, netif) != ERR_OK) {
-    LWIP_DEBUGF(NETIF_DEBUG, ("af_xdp_if_input: netif input error\n"));
-    pbuf_free(p);
-  }
-}
 /*-----------------------------------------------------------------------------------*/
 /*
  * af_xdp_if_init():
@@ -551,29 +535,39 @@ af_xpd_if_select(struct netif *netif)
 
 #else /* NO_SYS */
 
-static void
-af_xdp_if_thread(void *arg)
+static void af_xdp_if_thread(void *arg)
 {
-  struct netif *netif;
-  struct af_xdp_if  *af_xdp_if;
-  fd_set fdset;
-  int ret;
+	struct netif *netif;
+	struct af_xdp_if  *af_xdp_if;
+	int ret;
+	struct pollfd fds[MAX_SOCKS + 1];
+	netif = (struct netif *)arg;
+	af_xdp_if = (struct af_xdp_if *)netif->state;
+	int timeout;
+	int nfds = 1;
+	int i;
 
-  netif = (struct netif *)arg;
-  af_xdp_if = (struct af_xdp_if *)netif->state;
-  printf("%s() running\n", __func__);
+	printf("%s() running af_xdp rx thread\n", __func__);
 
-  while(1) {
-    /* Wait for a packet to arrive. */
-    //ret = select(tapif->fd + 1, &fdset, NULL, NULL, NULL);
+	memset(fds, 0, sizeof(fds));
 
-    if(ret == 1) {
-      /* Handle incoming packet. */
-      af_xdp_if_input(netif);
-    } else if(ret == -1) {
-      perror("af_xdp_thread: select");
-    }
-  }
+	for (i = 0; i < MAX_SOCKS; i++) {
+		if (!af_xdp_if->xsks[i])
+			continue;
+		fds[i].fd = af_xdp_if->xsks[i]->sfd;
+		fds[i].events = POLLIN;
+		timeout = 10; /* 1sn */
+	}
+
+
+	while (1) {
+		ret = poll(fds, nfds, timeout);
+		if (ret <= 0)
+			continue;
+
+		/* Handle incoming packets. */
+		af_xdp_if_input(netif);
+	}
 }
 
 #endif /* NO_SYS */
