@@ -275,6 +275,54 @@ static inline u32 xq_nb_free(struct xdp_uqueue *q, u32 ndescs)
 	return q->cached_cons - q->cached_prod;
 }
 
+static void kick_tx(int fd)
+{
+	int ret;
+
+	ret = sendto(fd, NULL, 0, MSG_DONTWAIT, NULL, 0);
+	if (ret >= 0 || errno == ENOBUFS || errno == EAGAIN || errno == EBUSY)
+		return;
+	lassert(0);
+}
+
+static inline u32 umem_nb_avail(struct xdp_umem_uqueue *q, u32 nb)
+{
+	u32 entries = q->cached_prod - q->cached_cons;
+
+	if (entries == 0) {
+		q->cached_prod = *q->producer;
+		entries = q->cached_prod - q->cached_cons;
+	}
+
+	return (entries > nb) ? nb : entries;
+}
+
+static inline size_t umem_complete_from_kernel(struct xdp_umem_uqueue *cq,
+					       u64 *d, size_t nb)
+{
+	u32 idx, i, entries = umem_nb_avail(cq, nb);
+
+	u_smp_rmb();
+
+	for (i = 0; i < entries; i++) {
+		idx = cq->cached_cons++ & cq->mask;
+		d[i] = cq->ring[idx];
+	}
+
+	if (entries > 0) {
+		u_smp_wmb();
+
+		*cq->consumer = cq->cached_cons;
+	}
+
+	return entries;
+}
+
+static inline void *xq_get_data(struct xdpsock *xsk, u64 addr)
+{
+	return &xsk->umem->frames[addr];
+}
+
 /*-----------------------------------------------------------------------------------*/
 /*
  * low_level_output():
@@ -294,8 +342,10 @@ low_level_output(struct netif *netif, struct pbuf *p)
 	struct xdp_uqueue *uq = &af_xdp_if->xsks[0]->tx; 
 	struct xdp_desc *r = uq->ring;
 	u32 idx;
+	unsigned int tx_idx = 0;
+	unsigned int rcvd;
 
-	printf("%s\n", __func__);
+	printf("%s plen %d\n", __func__, p->tot_len);
 #if 0
 	if (((double)rand()/(double)RAND_MAX) < 0.2) {
 		printf("drop output\n");
@@ -309,25 +359,27 @@ low_level_output(struct netif *netif, struct pbuf *p)
 		return ERR_IF;
 	}
 
-	/* initiate transfer(); */
-	pbuf_copy_partial(p, (void *)descs[0].addr, p->tot_len, 0); /*fixme: need zero-copy*/
-	descs[0].len = p->tot_len; 
-
 	idx = uq->cached_prod++ & uq->mask;
-	r[idx].addr = descs[0].addr;
-	r[idx].len = descs[0].len;
+	r[idx].addr = tx_idx << FRAME_SHIFT;
+	pbuf_copy_partial(p,
+			  xq_get_data(af_xdp_if->xsks[0], r[idx].addr),
+			  p->tot_len, 0); /*fixme: need zero-copy*/
+	r[idx].len = p->tot_len;
 
 	u_smp_wmb();
 
 	*uq->producer = uq->cached_prod;
 
+	kick_tx(af_xdp_if->xsks[0]->sfd);
+
+	rcvd = umem_complete_from_kernel(&af_xdp_if->xsks[0]->umem->cq, descs, BATCH_SIZE);
+	if (rcvd > 0) {
+		af_xdp_if->xsks[0]->outstanding_tx -= rcvd;
+		af_xdp_if->xsks[0]->tx_npkts += rcvd;
+	}
+
 	MIB2_STATS_NETIF_ADD(netif, ifoutoctets, descs[0].len);
 	return ERR_OK;
-}
-
-static inline void *xq_get_data(struct xdpsock *xsk, u64 addr)
-{
-	return &xsk->umem->frames[addr];
 }
 
 static inline int xq_deq(struct xdp_uqueue *uq,
