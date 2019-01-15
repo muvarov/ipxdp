@@ -74,6 +74,7 @@ all:
 			     -I$(LWIPDIR)/include  \
 			     -I$(LWIPDIR)/../contrib \
 			     -I$(LWIPDIR)/../contrib/apps/httpserver \
+			     -I. \
 			     -L. -lipxdp -o http_server
 	@ls -l http_server
 
