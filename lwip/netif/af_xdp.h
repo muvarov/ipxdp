@@ -16,7 +16,7 @@ int af_xdp_select(struct netif *netif);
 #define NUM_DESCS 1024
 
 /* Power-of-2 number of sockets */
-#define MAX_SOCKS 4
+#define MAX_SOCKS 1
 
 /* Round-robin receive */
 #define RR_LB 0
