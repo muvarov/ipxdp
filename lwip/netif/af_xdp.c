@@ -556,14 +556,16 @@ static void af_xdp_if_thread(void *arg)
 			continue;
 		fds[i].fd = af_xdp_if->xsks[i]->sfd;
 		fds[i].events = POLLIN;
-		timeout = 10; /* 1sn */
+		timeout = 1000; /* 1sn */
 	}
 
+	printf("%s() polling %d events\n", __func__, i);
 
 	while (1) {
-		ret = poll(fds, nfds, timeout);
+		ret = poll(fds, i /*nfds*/, timeout);
 		if (ret <= 0)
 			continue;
+		printf("poll found packet %d packet\n", ret);
 
 		/* Handle incoming packets. */
 		af_xdp_if_input(netif);
