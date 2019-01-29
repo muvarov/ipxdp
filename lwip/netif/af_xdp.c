@@ -409,6 +409,21 @@ static inline int xq_deq(struct xdp_uqueue *uq,
 	return entries;
 }
 
+
+typedef struct af_xdp_pbuf
+{
+	struct pbuf_custom p;
+	struct xdp_umem_uqueue *fq;
+	struct xdp_desc *d;
+} af_xdp_pbuf_t; /* size 48*/
+
+static void af_xdp_if_input_cutom_free(af_xdp_pbuf_t *pc)
+{
+	umem_fill_to_kernel_ex(pc->fq,
+			       pc->d,
+			       1);
+}
+
 /*
  * af_xdp_if_input():
  *
@@ -440,14 +455,20 @@ static void af_xdp_if_input(struct netif *netif)
 
 		MIB2_STATS_NETIF_ADD(netif, ifinoctets, descs[i].len);
 
-		/* We allocate a pbuf chain of pbufs from the pool. */
-		p = pbuf_alloc(PBUF_RAW, descs[i].len, PBUF_POOL);
-		if (p != NULL) {
-			/* acknowledge that packet has been read(); */
-			pbuf_take(p,
-				  pkt,
-				  descs[i].len);
+		af_xdp_pbuf_t *pcust;
 
+		pcust = (void *)((uintptr_t)pkt - FRAME_HEADROOM);
+		pcust->p.custom_free_function = af_xdp_if_input_cutom_free;
+		pcust->fq = &xsk->umem->fq;
+		pcust->d = &descs[i];
+
+		p = pbuf_alloced_custom(PBUF_RAW,
+					descs[i].len,
+					PBUF_REF,
+					(struct pbuf_custom *)pcust,
+					(void *)pkt,
+					descs[i].len);
+		if (p != NULL) {
 #if LINK_STATS
 			LINK_STATS_INC(link.recv);
 #endif /* LINK_STATS */
@@ -464,8 +485,6 @@ static void af_xdp_if_input(struct netif *netif)
 		}
 	}
 
-
-	umem_fill_to_kernel_ex(&xsk->umem->fq, descs, rcvd);
 
 #if 0
 	/* Simulate drop on input */
