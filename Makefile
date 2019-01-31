@@ -12,7 +12,7 @@ CFLAGS = -Wno-unused-value -Wno-pointer-sign \
 		-Wno-unknown-warning-option -O2 -Wall
 LDFLAGS = -lbpf -lelf -pthread
 
-all: xdpsock
+all: xdpsock lwip open62541
 
 .PHONY: xdpsock
 xdpsock:
@@ -45,7 +45,6 @@ open62541:
 		sed -i 's/set(LWIP_SRC.*/set\(LWIP_SRC "..\/..\/..\/build_sources\/lwip\/src")/g' CMakeLists.txt && \
 	cd build && cmake -DCMAKE_INSTALL_PREFIX=installed  ../ && \
 	make
-
 
 .PHONY: clean
 clean:
