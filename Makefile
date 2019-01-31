@@ -1,9 +1,9 @@
-ARCH := x86
-KSRC := /opt/Linaro/xdp/linux.git
+ARCH ?= x86
+KSRC ?= /opt/Linaro/xdp/linux.git
 
-LLVM := /opt/Linaro/xdp/llvm/build/bin
-LLC=${LLVM}/llc
-CLANG=${LLVM}/clang
+LLVM ?=
+LLC=${LLVM}llc
+CLANG=${LLVM}clang
 
 CFLAGS = -Wno-unused-value -Wno-pointer-sign \
 		-Wno-compare-distinct-pointer-types \
