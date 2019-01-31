@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <remote fetch="https://github.com" name="github"/>
+  <default remote="github" sync-j="4"/>
+
+  <project name="muvarov/open62541demos.git" path="build_sources/open62541demos" revision="master"/>
+  <project name="muvarov/open62541.git" path="build_sources/open62541" revision="master"/>
+  <project name="muvarov/iwip.git" path="build_sources/lwip" revision="master"/>
+
+</manifest>
