@@ -35,6 +35,18 @@ xdpsock:
 
 	${LLC} -march=bpf -filetype=obj xdpsock_kern.bc -o xdpsock_kern.o
 
+.PHONY: lwip
+lwip:
+	cd lwip && ARCH=$(ARCH) KSRC=$(KSRC) LWIPDIR=../build_sources/lwip/src make
+
+.PHONY: open62541
+open62541:
+	cd build_sources/open62541 && rm -rf build && mkdir build && \
+		sed -i 's/set(LWIP_SRC.*/set\(LWIP_SRC "..\/..\/..\/build_sources\/lwip\/src")/g' CMakeLists.txt && \
+	cd build && cmake -DCMAKE_INSTALL_PREFIX=installed  ../ && \
+	make
+
+
 .PHONY: clean
 clean:
 	rm -rf xdpsock

@@ -1,6 +1,6 @@
-LWIPDIR=/opt/Linaro/xdp/lwip.git/src
-ARCH := x86
-KSRC := /opt/Linaro/xdp/linux.git
+LWIPDIR ?= /opt/Linaro/xdp/lwip.git/src
+ARCH ?= x86
+KSRC ?= /opt/Linaro/xdp/linux.git
 
 include $(LWIPDIR)/Filelists.mk
 
