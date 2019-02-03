@@ -2,4 +2,6 @@ xdpsock
 xdpsock_kern.o
 xdpsock_kern.bc
 build_sources
+build_install
+*.swp
 .repo/

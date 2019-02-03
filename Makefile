@@ -12,7 +12,7 @@ CFLAGS = -Wno-unused-value -Wno-pointer-sign \
 		-Wno-unknown-warning-option -O2 -Wall
 LDFLAGS = -lbpf -lelf -pthread
 
-all: xdpsock lwip open62541
+all: xdpsock lwip open62541 open62541-demos
 
 .PHONY: xdpsock
 xdpsock:
@@ -41,10 +41,20 @@ lwip:
 
 .PHONY: open62541
 open62541:
-	cd build_sources/open62541 && rm -rf build && mkdir build && \
+	cd build_sources/open62541 && mkdir -p build && \
 		sed -i 's/set(LWIP_SRC.*/set\(LWIP_SRC "..\/..\/..\/build_sources\/lwip\/src")/g' CMakeLists.txt && \
-	cd build && cmake -DCMAKE_INSTALL_PREFIX=installed  ../ && \
-	make
+	cd build && cmake -DCMAKE_INSTALL_PREFIX=../../../build_install/open62541-install  ../ && \
+	make && \
+	rm -rf ../../../build_install/open62541-install && \
+	make install
+
+open62541-demos: open62541
+	cd build_sources/open62541demos/open62541temp && \
+	 LWIP_SRC=../../../build_sources/lwip/src \
+	 IPXDP=../../../lwip \
+	 OPCUA=../../../build_install/open62541-install \
+	 OPCUA_SRC=../../../build_sources/open62541 \
+	 make
 
 .PHONY: clean
 clean:
