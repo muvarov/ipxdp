@@ -83,6 +83,11 @@
 #endif
 #include <pthread.h>
 
+extern void max_lwip_init(void);
+
+extern int
+lwip_socket(int domain, int type, int protocol);
+
 enum swrap_dbglvl_e {
 	SWRAP_LOG_ERROR = 0,
 	SWRAP_LOG_WARN,
@@ -236,6 +241,8 @@ enum swrap_dbglvl_e {
  * files.  It may be raised (with a performance cost) to up to 254
  * without changing the format above */
 #define MAX_WRAPPED_INTERFACES 64
+
+static int init_is_done;
 
 struct swrap_address {
 	socklen_t sa_socklen;
@@ -3053,6 +3060,8 @@ static int swrap_socket(int family, int type, int protocol)
 	int ret;
 	int real_type = type;
 
+	sleep(1);
+	printf("%s\n", __func__);
 	/*
 	 * Remove possible addition flags passed to socket() so
 	 * do not fail checking the type.
@@ -3066,7 +3075,8 @@ static int swrap_socket(int family, int type, int protocol)
 #endif
 
 	if (!socket_wrapper_enabled()) {
-		return libc_socket(family, type, protocol);
+		return lwip_socket(family, type, protocol);
+		//return libc_socket(family, type, protocol);
 	}
 
 	switch (family) {
@@ -3082,7 +3092,8 @@ static int swrap_socket(int family, int type, int protocol)
 	case AF_PACKET:
 #endif /* AF_PACKET */
 	case AF_UNIX:
-		return libc_socket(family, type, protocol);
+		return lwip_socket(family, type, protocol);
+		//return libc_socket(family, type, protocol);
 	default:
 		errno = EAFNOSUPPORT;
 		return -1;
@@ -3183,6 +3194,14 @@ static int swrap_socket(int family, int type, int protocol)
 
 int socket(int family, int type, int protocol)
 {
+	max_lwip_init();
+	printf("max_lwip_init done\n");
+	init_is_done = 1;
+	sleep(1);
+	while (!init_is_done) {
+		printf("waiting for init_is_done\n");
+		sleep(1);
+	}
 	return swrap_socket(family, type, protocol);
 }
 
@@ -6283,13 +6302,14 @@ void swrap_constructor(void)
 			  "Failed to initialize pthread mutex");
 		exit(-1);
 	}
-
+	
 	ret = socket_wrapper_init_mutex(&first_free_mutex);
 	if (ret != 0) {
 		SWRAP_LOG(SWRAP_LOG_ERROR,
 			  "Failed to initialize pthread mutex");
 		exit(-1);
 	}
+
 }
 
 /****************************

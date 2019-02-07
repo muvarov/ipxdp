@@ -12,7 +12,14 @@ CFLAGS = -Wno-unused-value -Wno-pointer-sign \
 		-Wno-unknown-warning-option -O2 -Wall
 LDFLAGS = -lbpf -lelf -pthread
 
-all: xdpsock lwip open62541 open62541-demos
+all: xdpsock lwip open62541 open62541-demos socket_wrapper
+
+.PHONY: socket_wrapper
+socket_wrapper: open62541
+	cd socket_wrapper && \
+	LWIP_SRC=../build_sources/lwip/src \
+	IPXDP=../lwip \
+	make
 
 .PHONY: xdpsock
 xdpsock:
