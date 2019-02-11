@@ -6,5 +6,6 @@
   <project name="muvarov/open62541demos.git" path="build_sources/open62541demos" revision="master"/>
   <project name="muvarov/open62541.git" path="build_sources/open62541" revision="master"/>
   <project name="muvarov/iwip.git" path="build_sources/lwip" revision="master"/>
+  <project name="muvarov/iperf-xdp.git" path="build_sources/iperf-xdp" revision="master"/>
 
 </manifest>
