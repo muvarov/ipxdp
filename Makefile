@@ -12,7 +12,17 @@ CFLAGS = -Wno-unused-value -Wno-pointer-sign \
 		-Wno-unknown-warning-option -O2 -Wall
 LDFLAGS = -lbpf -lelf -pthread
 
-all: xdpsock lwip open62541 open62541-demos socket_wrapper
+all: xdpsock lwip open62541 open62541-demos socket_wrapper iperf
+
+.PHONY: iperf
+iperf: lwip
+	cd build_sources/iperf-xdp && \
+	./configure CFLAGS="-I`pwd`/../../build_sources/lwip/src/include \
+			    -I`pwd`/../../build_sources/lwip/contrib/ports/unix/lib \
+			    -I`pwd`/../../build_sources/lwip/contrib/ports/unix/port/include" \
+		    LDFLAGS="-L`pwd`/../../lwip -lipxdp"  && \
+	make
+
 
 .PHONY: socket_wrapper
 socket_wrapper: open62541

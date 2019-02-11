@@ -38,6 +38,17 @@ lwipcore4_SRCS = \
     ${LWIPDIR}/core/ipv4/ip4.c      \
     ${LWIPDIR}/core/ipv4/ip4_addr.c
 
+lwipcore6_SRCS = \
+	$(LWIPDIR)/core/ipv6/dhcp6.c \
+	$(LWIPDIR)/core/ipv6/ethip6.c \
+	$(LWIPDIR)/core/ipv6/icmp6.c \
+	$(LWIPDIR)/core/ipv6/inet6.c \
+	$(LWIPDIR)/core/ipv6/ip6.c \
+	$(LWIPDIR)/core/ipv6/ip6_addr.c \
+	$(LWIPDIR)/core/ipv6/ip6_frag.c \
+	$(LWIPDIR)/core/ipv6/mld6.c \
+	$(LWIPDIR)/core/ipv6/nd6.c
+
 example_app = $(LWIPDIR)/../contrib/apps/httpserver/httpserver-netconn.c \
 		http_server.c
 
@@ -62,6 +73,7 @@ all:
 		$(COREFILES) \
 		$(lwipnetif_SRCS) \
 		$(lwipcore4_SRCS) \
+		$(lwipcore6_SRCS) \
 		$(lwipapi_SRCS) \
 		$(LWIPUNIXPORT) \
 		$(AF_XDP_LIBS) \
