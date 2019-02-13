@@ -346,7 +346,6 @@ low_level_output(struct netif *netif, struct pbuf *p)
 	unsigned int tx_idx = 0;
 	unsigned int rcvd;
 
-	printf("%s plen %d\n", __func__, p->tot_len);
 #if 0
 	if (((double)rand()/(double)RAND_MAX) < 0.2) {
 		printf("drop output\n");
@@ -441,9 +440,6 @@ static void af_xdp_if_input(struct netif *netif)
 	struct xdp_desc descs[BATCH_SIZE];
 	unsigned int rcvd, i;
 
-
-	printf("%s\n", __func__);
-
 	rcvd = xq_deq(&xsk->rx, descs, BATCH_SIZE);
 	if (!rcvd)
 		return;
@@ -451,7 +447,9 @@ static void af_xdp_if_input(struct netif *netif)
 	for (i = 0; i < rcvd; i++) {
 		char *pkt = xq_get_data(xsk, descs[i].addr);
 
+#if 0
 		hex_dump(pkt, descs[i].len, descs[i].addr);
+#endif
 
 		MIB2_STATS_NETIF_ADD(netif, ifinoctets, descs[i].len);
 
@@ -584,8 +582,6 @@ static void af_xdp_if_thread(void *arg)
 		ret = poll(fds, i /*nfds*/, timeout);
 		if (ret <= 0)
 			continue;
-		printf("poll found packet %d packet\n", ret);
-
 		/* Handle incoming packets. */
 		af_xdp_if_input(netif);
 	}
