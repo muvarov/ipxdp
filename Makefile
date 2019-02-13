@@ -19,8 +19,10 @@ iperf: lwip
 	cd build_sources/iperf-xdp && \
 	./configure CFLAGS="-I`pwd`/../../build_sources/lwip/src/include \
 			    -I`pwd`/../../build_sources/lwip/contrib/ports/unix/lib \
-			    -I`pwd`/../../build_sources/lwip/contrib/ports/unix/port/include" \
+			    -I`pwd`/../../build_sources/lwip/contrib/ports/unix/port/include \
+			    -I`pwd`/../../lwip" \
 		    LDFLAGS="-L`pwd`/../../lwip -lipxdp"  && \
+	make clean && \
 	make
 
 
