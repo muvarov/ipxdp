@@ -21,10 +21,11 @@ iperf: lwip
 			    -I`pwd`/../../build_sources/lwip/contrib/ports/unix/lib \
 			    -I`pwd`/../../build_sources/lwip/contrib/ports/unix/port/include \
 			    -I`pwd`/../../lwip" \
-		    LDFLAGS="-L`pwd`/../../lwip -lipxdp"  && \
+		    LDFLAGS="-L`pwd`/../../lwip -lipxdp" \
+		--prefix=`pwd`/../../build_install && \
 	make clean && \
-	make
-
+	make && \
+	make install
 
 .PHONY: socket_wrapper
 socket_wrapper: open62541
@@ -62,16 +63,15 @@ lwip:
 open62541:
 	cd build_sources/open62541 && mkdir -p build && \
 		sed -i 's/set(LWIP_SRC.*/set\(LWIP_SRC "..\/..\/..\/build_sources\/lwip\/src")/g' CMakeLists.txt && \
-	cd build && cmake -DCMAKE_INSTALL_PREFIX=../../../build_install/open62541-install  ../ && \
+	cd build && cmake -DCMAKE_INSTALL_PREFIX=../../../build_install ../ && \
 	make && \
-	rm -rf ../../../build_install/open62541-install && \
 	make install
 
 open62541-demos: open62541
 	cd build_sources/open62541demos/open62541temp && \
 	 LWIP_SRC=../../../build_sources/lwip/src \
 	 IPXDP=../../../lwip \
-	 OPCUA=../../../build_install/open62541-install \
+	 OPCUA=../../../build_install \
 	 OPCUA_SRC=../../../build_sources/open62541 \
 	 make
 
