@@ -22,7 +22,7 @@ int af_xdp_select(struct netif *netif);
 #define RR_LB 0
 
 #define NUM_FRAMES 131072
-#define FRAME_HEADROOM 64
+#define FRAME_HEADROOM 0
 #define FRAME_SHIFT 11
 #define FRAME_SIZE 2048
 
