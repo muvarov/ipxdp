@@ -75,6 +75,11 @@ open62541-demos: open62541
 	 OPCUA_SRC=../../../build_sources/open62541 \
 	 make
 
+.PHONY: install
+install: all
+	cp ./lwip/libipxdp.so ./build_install/lib/
+	cp xdpsock_kern.o ./build_install/bin/lwip_af_xdp_kern.o
+
 .PHONY: clean
 clean:
 	rm -rf xdpsock
