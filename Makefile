@@ -1,5 +1,7 @@
 ARCH ?= x86
-KSRC ?= /opt/Linaro/xdp/linux.git
+
+TOPDIR = $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+KSRC ?= $(TOPDIR)/build_sources/linux
 
 LLVM ?=
 LLC=${LLVM}llc
@@ -47,12 +49,13 @@ libbpf: zlib elfutils
 .PHONY: iperf
 iperf: lwip
 	cd build_sources/iperf-xdp && \
-	./configure CFLAGS="-I`pwd`/../../build_sources/lwip/src/include \
+	./configure --host=${HOST} CFLAGS="-I`pwd`/../../build_sources/lwip/src/include \
 			    -I`pwd`/../../build_sources/lwip/contrib/ports/unix/lib \
 			    -I`pwd`/../../build_sources/lwip/contrib/ports/unix/port/include \
-			    -I`pwd`/../../lwip" \
+			    -I`pwd`/../../lwip \
+	 		    -I$(TOPDIR)/build_install/include -L$(TOPDIR)/build_install/lib -lbpf -lelf -lz -lipxdp" \
 		    LDFLAGS="-L`pwd`/../../lwip -lipxdp" \
-		--prefix=`pwd`/../../build_install && \
+		--prefix=`pwd`/../../build_install --without-openssl && \
 	make && \
 	make install
 
@@ -69,8 +72,9 @@ xdpsock:
 		-I$(KSRC)/tools/testing/selftests/bpf \
 		-I$(KSRC)/tools/testing/selftests/bpf/include \
 		-I$(KSRC)/tools/include -I. -I$(KSRC)/tools/lib/bpf \
+		-I$(TOPDIR)/build_install/include -L$(TOPDIR)/build_install/lib \
 		-I$(KSRC)/include/uapi -Wl,-Bstatic -L$(KSRC)/tools/lib/bpf/ \
-		-Wl,-Bdynamic $(LDFLAGS) -o xdpsock -Wall
+		-Wl,-Bdynamic $(LDFLAGS) -lz -o xdpsock -Wall
 
 	${CLANG} -nostdinc \
 		-I$(KSRC)/arch/$(ARCH)/include -I$(KSRC)/arch/$(ARCH)/include/generated \
@@ -86,7 +90,10 @@ xdpsock:
 
 .PHONY: lwip
 lwip:
-	cd lwip && ARCH=$(ARCH) KSRC=$(KSRC) LWIPDIR=../build_sources/lwip/src make
+	cd lwip && \
+	ARCH=$(ARCH) KSRC=$(KSRC) LWIPDIR=../build_sources/lwip/src \
+		EXT_FLAGS="-I$(TOPDIR)/build_install/include -L$(TOPDIR)/build_install/lib"\
+		make
 
 .PHONY: open62541
 open62541:
@@ -102,6 +109,7 @@ open62541-demos: open62541
 	 IPXDP=../../../lwip \
 	 OPCUA=../../../build_install \
 	 OPCUA_SRC=../../../build_sources/open62541 \
+	 CFLAGS="-I$(TOPDIR)/build_install/include -L$(TOPDIR)/build_install/lib -lbpf -lelf -lz -lipxdp" \
 	 make
 
 .PHONY: install

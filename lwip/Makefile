@@ -60,7 +60,7 @@ AF_XDP_INCLUDE = -I$(KSRC)/tools/lib/ \
 		-I$(KSRC)/tools/include -I. -I$(KSRC)/tools/lib/bpf \
 		-I$(KSRC)/include/uapi
 
-AF_XDP_LIBS = -lbpf -lelf
+AF_XDP_LIBS = -lbpf -lelf -lz
 
 all:
 	@echo compiling lwip unix port
@@ -69,6 +69,7 @@ all:
 		-I$(LWIPDIR)/../contrib/ports/unix/port/include \
 		-I$(LWIPDIR)/include \
 		-Inetif \
+		$(EXT_FLAGS) \
 		$(AF_XDP_INCLUDE) \
 		$(COREFILES) \
 		$(lwipnetif_SRCS) \
@@ -87,18 +88,24 @@ all:
 			     -I$(LWIPDIR)/../contrib \
 			     -I$(LWIPDIR)/../contrib/apps/httpserver \
 			     -I. \
+			     $(AF_XDP_INCLUDE) \
+			     $(AF_XDP_LIBS) \
+			     $(EXT_FLAGS) \
 			     -L. -lipxdp -o http_server
 	@ls -l http_server
 
 	@echo compiling example ping
-	@${CC} $(CFLAGS) -O0 -g $(ping_app) -I$(LWIPDIR)/../contrib/ports/unix/lib \
+	${CC} $(CFLAGS) -O0 -g $(ping_app) -I$(LWIPDIR)/../contrib/ports/unix/lib \
 			     -I$(LWIPDIR)/../contrib/ports/unix/port/include \
 			     -I$(LWIPDIR)/include  \
 			     -I$(LWIPDIR)/../contrib \
 			     -I$(LWIPDIR)/../contrib/apps/httpserver \
 			     -I. \
+			     $(AF_XDP_INCLUDE) \
+			     $(AF_XDP_LIBS) \
+			     $(EXT_FLAGS) \
 			     -L. -lipxdp -o ping
-
+	
 	@ls -l ping
 
 check:
