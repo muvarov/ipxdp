@@ -5,12 +5,12 @@ LLVM ?=
 LLC=${LLVM}llc
 CLANG=${LLVM}clang
 
-
-export HOST=arm-linux-gnueabihf
-export CC=arm-linux-gnueabihf-gcc
-export LD=arm-linux-gnueabihf-ld
-export CROSS_COMPILE=arm-linux-gnueabihf-
-
+ifeq ($(ARCH),arm)
+	export HOST=arm-linux-gnueabihf
+	export CC=arm-linux-gnueabihf-gcc
+	export LD=arm-linux-gnueabihf-ld
+	export CROSS_COMPILE=arm-linux-gnueabihf-
+endif
 
 CFLAGS = -Wno-unused-value -Wno-pointer-sign \
 		-Wno-compare-distinct-pointer-types \
