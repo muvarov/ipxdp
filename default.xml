@@ -7,6 +7,8 @@
   <project name="muvarov/open62541.git" path="build_sources/open62541" revision="master"/>
   <project name="muvarov/iwip.git" path="build_sources/lwip" revision="master"/>
   <project name="muvarov/iperf-xdp.git" path="build_sources/iperf-xdp" revision="master"/>
+  <project name="muvarov/elfutils.git" path="build_sources/elfutils" revision="master"/>
+  <project name="madler/zlib.git" path="build_sources/zlib" revision="v1.2.11"/>
 
   <remote fetch="https://git.kernel.org" name="kernel.org"/>
   <project remote="kernel.org" name="pub/scm/linux/kernel/git/torvalds/linux.git" path="build_sources/linux" revision="3c730b1041aefa2a92b96fcba9db237d28585922"/>
