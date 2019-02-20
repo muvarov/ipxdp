@@ -8,4 +8,7 @@
   <project name="muvarov/iwip.git" path="build_sources/lwip" revision="master"/>
   <project name="muvarov/iperf-xdp.git" path="build_sources/iperf-xdp" revision="master"/>
 
+  <remote fetch="https://git.kernel.org" name="kernel.org"/>
+  <project remote="kernel.org" name="pub/scm/linux/kernel/git/torvalds/linux.git" path="build_sources/linux" revision="3c730b1041aefa2a92b96fcba9db237d28585922"/>
+
 </manifest>
