@@ -6,10 +6,10 @@ LLC=${LLVM}llc
 CLANG=${LLVM}clang
 
 
-#HOST=arm-linux-gnueabihf
-#CC=arm-linux-gnueabihf-gcc
-#LD=arm-linux-gnueabihf-ld
-#CROSS_COMPILE=arm-linux-gnueabihf-
+export HOST=arm-linux-gnueabihf
+export CC=arm-linux-gnueabihf-gcc
+export LD=arm-linux-gnueabihf-ld
+export CROSS_COMPILE=arm-linux-gnueabihf-
 
 
 CFLAGS = -Wno-unused-value -Wno-pointer-sign \
@@ -25,6 +25,7 @@ all: xdpsock lwip open62541 open62541-demos socket_wrapper iperf
 .PHONY: zlib
 zlib:
 	cd build_sources/zlib && \
+		./configure && \
 		make install prefix=`pwd`/../../build_install
 
 .PHONY: elfutils
@@ -33,8 +34,15 @@ elfutils:
 	./configure --host=${HOST} --prefix=`pwd`/../../build_install \
 		CFLAGS="-I`pwd`/../../build_install/include -Wno-implicit-fallthrough -Wno-error -O2"  \
 		LDFLAGS="-L`pwd`/../../build_install/lib -lz" && \
-	make clean && \
 	make install 
+
+.PHONY: libbpf
+libbpf: zlib elfutils
+	cd build_sources/linux && \
+	make multi_v7_defconfig && \
+		cd tools/lib/bpf && \
+		make CFLAGS="-I`pwd`/../../../../../build_install/include"  && \
+		cp libbpf.so ../../../../../build_install/lib/
 
 .PHONY: iperf
 iperf: lwip
@@ -45,7 +53,6 @@ iperf: lwip
 			    -I`pwd`/../../lwip" \
 		    LDFLAGS="-L`pwd`/../../lwip -lipxdp" \
 		--prefix=`pwd`/../../build_install && \
-	make clean && \
 	make && \
 	make install
 
