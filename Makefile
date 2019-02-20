@@ -5,6 +5,13 @@ LLVM ?=
 LLC=${LLVM}llc
 CLANG=${LLVM}clang
 
+
+#HOST=arm-linux-gnueabihf
+#CC=arm-linux-gnueabihf-gcc
+#LD=arm-linux-gnueabihf-ld
+#CROSS_COMPILE=arm-linux-gnueabihf-
+
+
 CFLAGS = -Wno-unused-value -Wno-pointer-sign \
 		-Wno-compare-distinct-pointer-types \
 		-Wno-gnu-variable-sized-type-not-at-end \
@@ -13,6 +20,21 @@ CFLAGS = -Wno-unused-value -Wno-pointer-sign \
 LDFLAGS = -lbpf -lelf -pthread
 
 all: xdpsock lwip open62541 open62541-demos socket_wrapper iperf
+
+
+.PHONY: zlib
+zlib:
+	cd build_sources/zlib && \
+		make install prefix=`pwd`/../../build_install
+
+.PHONY: elfutils
+elfutils:
+	cd build_sources/elfutils && \
+	./configure --host=${HOST} --prefix=`pwd`/../../build_install \
+		CFLAGS="-I`pwd`/../../build_install/include -Wno-implicit-fallthrough -Wno-error -O2"  \
+		LDFLAGS="-L`pwd`/../../build_install/lib -lz" && \
+	make clean && \
+	make install 
 
 .PHONY: iperf
 iperf: lwip
