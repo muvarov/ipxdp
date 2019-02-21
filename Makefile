@@ -7,6 +7,11 @@ LLVM ?=
 LLC=${LLVM}llc
 CLANG=${LLVM}clang
 
+# If set to 1 then timestemps before lwip stack and after
+# will be printed.
+
+LWIP_PRINT_TS=0
+
 ifeq ($(ARCH),arm)
 	export HOST=arm-linux-gnueabihf
 	export CC=arm-linux-gnueabihf-gcc
@@ -92,7 +97,7 @@ xdpsock:
 lwip:
 	cd lwip && \
 	ARCH=$(ARCH) KSRC=$(KSRC) LWIPDIR=../build_sources/lwip/src \
-		EXT_FLAGS="-I$(TOPDIR)/build_install/include -L$(TOPDIR)/build_install/lib"\
+		EXT_FLAGS="-I$(TOPDIR)/build_install/include -L$(TOPDIR)/build_install/lib -DLWIP_PRINT_TS=$(LWIP_PRINT_TS)"\
 		make
 
 .PHONY: open62541
