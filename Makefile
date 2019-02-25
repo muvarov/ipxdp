@@ -48,7 +48,7 @@ libbpf: zlib elfutils
 	cd build_sources/linux && \
 	make multi_v7_defconfig && \
 		cd tools/lib/bpf && \
-		make CFLAGS="-I`pwd`/../../../../../build_install/include"  && \
+		make CFLAGS="-I$(TOPDIR)/build_install/include" LDFLAGS="-L$(TOPDIR)/build_install/lib" && \
 		cp libbpf.so ../../../../../build_install/lib/
 
 .PHONY: iperf
