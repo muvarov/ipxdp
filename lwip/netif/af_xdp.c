@@ -695,7 +695,7 @@ static struct xdp_umem *xdp_umem_configure(int sfd)
 	lassert(posix_memalign(&bufs, getpagesize(), /* PAGE_SIZE aligned */
 			       NUM_FRAMES * FRAME_SIZE) == 0);
 
-	mr.addr = (__u64)bufs;
+	mr.addr = (unsigned long)bufs;
 	mr.len = NUM_FRAMES * FRAME_SIZE;
 	mr.chunk_size = FRAME_SIZE;
 	mr.headroom = FRAME_HEADROOM;
