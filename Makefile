@@ -47,6 +47,7 @@ elfutils:
 libbpf: zlib elfutils
 	cd build_sources/linux && \
 	make multi_v7_defconfig && \
+	make -j 4 > /dev/null && \
 		cd tools/lib/bpf && \
 		make CFLAGS="-I$(TOPDIR)/build_install/include" LDFLAGS="-L$(TOPDIR)/build_install/lib" && \
 		cp libbpf.so ../../../../../build_install/lib/
